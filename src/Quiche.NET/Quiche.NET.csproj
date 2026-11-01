@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <!-- The P/Invoke layer is pointer-heavy by nature (quiche_conn*,
+         byte buffers, sockaddr pointers). All unsafe code lives under
+         Native/ and is reviewed as FFI surface, not application logic. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Quiche.NET</AssemblyName>
+    <RootNamespace>Net.Codingwell.Quiche</RootNamespace>
+    <PackageId>net.codingwell.quiche</PackageId>
+    <Version>0.1.0-alpha.1</Version>
+    <Authors>Quiche.NET contributors</Authors>
+    <Description>C# wrapper for Cloudflare's quiche (raw QUIC streams) with prebuilt native binaries for supported platforms. One package reference; no native setup on supported platforms.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/codingwell/net.codingwell.quiche</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/codingwell/net.codingwell.quiche</RepositoryUrl>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Repo README doubles as the NuGet package readme, at the package root. -->
+    <None Include="..\..\README.md" Pack="true" PackagePath="/" />
+    <!-- Native binaries staged by CI (publish workflow) under
+         native/pack/runtimes/<rid>/native/. This directory is
+         gitignored and does not exist on a plain checkout, so a
+         plain `dotnet pack` produces a managed-only package with no
+         runtimes/ entries — that is intentional for local dev, and
+         the publish workflow fails loudly if any of the 7 RIDs is
+         missing from the staging dir before packing. -->
+    <None Include="..\..\native\pack\runtimes\**\*" Pack="true" PackagePath="runtimes\%(RecursiveDir)%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
+
+</Project>
