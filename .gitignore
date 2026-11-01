@@ -1,0 +1,28 @@
+## .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+*.nupkg
+*.snupkg
+
+## Rust / native builds
+target/
+native/out/
+*.so
+*.dylib
+*.dll
+!**/runtimes/**/native/*
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Editor
+.idea/
+*.swp
+
+## CI publish staging (never committed; built by .github/workflows/publish.yml)
+native/pack/
