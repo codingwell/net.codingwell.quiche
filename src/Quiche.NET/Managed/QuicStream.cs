@@ -66,7 +66,11 @@ namespace Net.Codingwell.Quiche
         /// <summary>
         /// Sends <paramref name="data"/>, looping over flow-control
         /// windows as needed (a send that cannot proceed waits for
-        /// the pump to report the stream writable). When
+        /// the pump to report the stream writable). quiche's Done
+        /// (-1) result is treated as "not writable yet", not as an
+        /// error, for both data and the FIN send — it is what
+        /// quiche returns when a send exceeds the current
+        /// congestion window. Any other negative result is fatal. When
         /// <paramref name="fin"/> is true, a zero-length FIN frame
         /// ends the stream's write side; sending after FIN throws.
         /// Each chunk is drained to the socket immediately, except
@@ -140,14 +144,26 @@ namespace Net.Codingwell.Quiche
                             }
                             continue;
                         }
-                        if (written < 0)
+                        if (written < 0
+                            && (long)written != NativeErrors.Done)
                         {
                             throw new QuicException(
                                 $"Stream send failed (quiche error {written}).",
                                 (long)written, fromPeer: false);
                         }
-                        // written == 0: no flow-control window.
-                        // Wait outside the gate for writability.
+                        // written == 0, or Done (-1): the stream is
+                        // not writable right now — flow control or
+                        // the congestion window is full. Nothing
+                        // was written for this chunk (offset is
+                        // unchanged), so wait outside the gate for
+                        // the pump to report the stream writable
+                        // again (after ACKs reopen the window) and
+                        // retry the same chunk. Done must NOT be
+                        // treated as fatal: quiche returns it for
+                        // any send larger than the current window
+                        // (e.g. >= the ~12 KB initial congestion
+                        // window), which previously made every
+                        // large SendAsync fail immediately.
                         _writableWaiter ??=
                             new TaskCompletionSource<object?>(
                                 TaskCreationOptions.RunContinuationsAsynchronously);
@@ -167,44 +183,78 @@ namespace Net.Codingwell.Quiche
             }
             if (fin)
             {
-                lock (_connection.SocketGate())
+                // FIN send, with the same Done handling as data:
+                // a Done result means the stream is not writable
+                // yet (e.g. the final data chunk is still
+                // buffered and the window is full), so drain —
+                // which sends that buffered data, letting ACKs
+                // reopen the window — then wait and retry.
+                // Any other negative result is fatal.
+                while (true)
                 {
-                    ThrowIfUnusableLocked();
-                    if (_writeFinished)
+                    Task? waitTask = null;
+                    lock (_connection.SocketGate())
                     {
-                        throw new QuicException(
-                            "Stream write side is already finished.");
-                    }
-                    unsafe
-                    {
-                        if (_connection.NativeHandle == IntPtr.Zero)
+                        ThrowIfUnusableLocked();
+                        if (_writeFinished)
                         {
-                            throw new QuicException("Connection is closed.");
+                            throw new QuicException(
+                                "Stream write side is already finished.");
                         }
-                        Connection* handle =
-                            (Connection*)_connection.NativeHandle.ToPointer();
-                        // Zero-length FIN: the pointer must be valid
-                        // even though no bytes are read, so use a
-                        // dummy byte rather than an empty array.
-                        // This drain also carries any final data
-                        // chunk whose drain was skipped above.
-                        byte dummy = 0;
-                        ulong errorCode = 0;
-                        nint sent = NativeMethods.quiche_conn_stream_send(
-                            handle, Id, &dummy, 0, true, &errorCode);
-                        try
+                        unsafe
                         {
-                            if (sent < 0)
+                            if (_connection.NativeHandle == IntPtr.Zero)
                             {
-                                throw new QuicException(
-                                    $"Stream FIN failed (quiche error {sent}).",
-                                    (long)sent, fromPeer: false);
+                                throw new QuicException("Connection is closed.");
                             }
-                            _writeFinished = true;
+                            Connection* handle =
+                                (Connection*)_connection.NativeHandle.ToPointer();
+                            // Zero-length FIN: the pointer must be
+                            // valid even though no bytes are read,
+                            // so use a dummy byte rather than an
+                            // empty array. This drain also carries
+                            // any final data chunk whose drain was
+                            // skipped above.
+                            byte dummy = 0;
+                            ulong errorCode = 0;
+                            nint sent = NativeMethods.quiche_conn_stream_send(
+                                handle, Id, &dummy, 0, true, &errorCode);
+                            try
+                            {
+                                if (sent < 0
+                                    && (long)sent != NativeErrors.Done)
+                                {
+                                    throw new QuicException(
+                                        $"Stream FIN failed (quiche error {sent}).",
+                                        (long)sent, fromPeer: false);
+                                }
+                                if (sent >= 0)
+                                {
+                                    _writeFinished = true;
+                                }
+                            }
+                            finally
+                            {
+                                _connection.SocketDrainLocked();
+                            }
+                            if (sent >= 0)
+                            {
+                                break;
+                            }
+                            _writableWaiter ??=
+                                new TaskCompletionSource<object?>(
+                                    TaskCreationOptions.RunContinuationsAsynchronously);
+                            waitTask = _writableWaiter.Task;
                         }
-                        finally
+                    }
+                    // Outside the gate: wait for writability, or
+                    // for cancellation, then retry the FIN send.
+                    if (waitTask != null)
+                    {
+                        using (cancellationToken.Register(() =>
+                            _writableWaiter?.TrySetCanceled(cancellationToken)))
                         {
-                            _connection.SocketDrainLocked();
+                            await waitTask.ConfigureAwait(false);
                         }
                     }
                 }

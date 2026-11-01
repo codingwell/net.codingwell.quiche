@@ -74,6 +74,51 @@ public class SharedSocketTests
     }
 
     [Fact]
+    public async Task LargeSendBeyondCongestionWindowEchoes()
+    {
+        // Regression test for the SendAsync Done bug: a single
+        // send larger than the initial congestion window
+        // (~12 KB: 10 x 1,200-byte packets) used to fail
+        // immediately with "Stream send failed (quiche error
+        // -1)", because quiche's Done result was treated as
+        // fatal instead of "not writable yet". 64 KiB is well
+        // above that window and well below the 1 MB per-stream
+        // flow-control limit, so it exercises window reopening
+        // without tripping flow control. Before the fix this
+        // test fails on the first SendAsync; after it, the
+        // send waits for ACKs to reopen the window and the
+        // echo comes back byte-identical.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken ct = timeout.Token;
+        using var socketA = new QuicSocket(
+            new IPEndPoint(IPAddress.Loopback, 0), ServerOptions());
+        using var socketB = new QuicSocket(
+            new IPEndPoint(IPAddress.Loopback, 0), ServerOptions());
+
+        Task<QuicConnection> aConnectsToB = socketA.ConnectAsync(
+            socketB.LocalEndPoint, "localhost", TestClientOptions(), ct);
+        Task<QuicConnection> bAcceptsA = socketB.AcceptAsync(ct);
+        QuicConnection aToB = await aConnectsToB;
+        QuicConnection bFromA = await bAcceptsA;
+
+        byte[] payload = new byte[64 * 1024];
+        for (int i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)((i * 7 + 1) % 251);
+        }
+        QuicStream outbound = aToB.OpenStream();
+        await outbound.SendAsync(payload, fin: true, ct);
+
+        QuicStream inbound = await bFromA.AcceptStreamAsync(ct);
+        byte[] received = await ReadUntilFinAsync(inbound, ct);
+        Assert.Equal(payload, received);
+
+        await inbound.SendAsync(received, fin: true, ct);
+        byte[] echo = await ReadUntilFinAsync(outbound, ct);
+        Assert.Equal(payload, echo);
+    }
+
+    [Fact]
     public async Task ConnectToDialOnlySocketCancels()
     {
         // A socket without server options drops inbound Initials, so
