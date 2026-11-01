@@ -12,7 +12,7 @@
     <AssemblyName>Quiche.NET</AssemblyName>
     <RootNamespace>Net.Codingwell.Quiche</RootNamespace>
     <PackageId>net.codingwell.quiche</PackageId>
-    <Version>0.1.0-alpha.1</Version>
+    <Version>0.1.0-alpha2</Version>
     <Authors>Quiche.NET contributors</Authors>
     <Description>C# wrapper for Cloudflare's quiche (raw QUIC streams) with prebuilt native binaries for supported platforms. One package reference; no native setup on supported platforms.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

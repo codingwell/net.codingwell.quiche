@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fixed `QuicStream.SendAsync` treating quiche's Done (-1) result
+  as a fatal error: a send larger than the current congestion
+  window (e.g. >= the ~12 KB initial window) now waits for the
+  pump to report the stream writable again and retries the same
+  chunk, instead of throwing "Stream send failed (quiche error
+  -1)". The same handling applies to the FIN send. Other
+  negative results remain fatal. Covered by the new
+  `LargeSendBeyondCongestionWindowEchoes` test (64 KiB echo).
+  This is the fix intended for 0.1.0-alpha2; 0.1.0-alpha1 is
+  locked and cannot be re-pushed with it.
 - Trusted publishing workflow: `.github/workflows/publish.yml`
   builds quiche for all 7 RIDs (same matrix as `native.yml`),
   stages the natives into the package via a new csproj packaging
@@ -21,26 +31,54 @@
   option, no HTTP/3, packaged runtimes lagging the CI matrix,
   pre-release API).
 
-Still pending before the first public (listed) release — not done by
-this file:
+Still pending — not done by this file:
 
-- Merge the draft PR stack (#1–#4) to main and re-run CI on the
-  merged result; the rename, readme, and publish-workflow commits
-  are currently local only, and the workflow cannot run until it
-  is pushed to GitHub.
-- Configure the nuget.org Trusted Publishing policy (Package
-  Owner = the org that owns net.codingwell.quiche; Repository
-  Owner = codingwell, repo net.codingwell.quiche, workflow file
-  `publish.yml`, no environment) and the `NUGET_USER` repo secret
-  (= the org name) — see the workflow header for the exact values.
-- Decide the packaged runtime scope for the first public release
-  (all 7 CI cells, or Linux only) and make the README match it.
-  Note: the publish workflow as written ships all 7 RIDs, so
-  choosing Linux-only would mean narrowing its matrix, not just
-  the README.
-- Verify a QUIC handshake through the published package itself
-  (the ProjectReference path is verified; a package-consumer
-  handshake is not yet), on a host that allows UDP.
+- Decide the first non-alpha release number (0.1.0 vs 1.0) and
+  whether the libp2p transport switches from ProjectReference
+  to this package (a separate decision from this release).
+- The README's "Latest published version" line still says
+  0.1.0-alpha.1 (unlisted); it was not updated when alpha1
+  shipped listed, and is not updated by this change — it
+  should be refreshed at release time.
+
+Completed since this file was last written (no longer pending):
+
+- The squashed import merged as PR #1, the Trusted Publishing
+  policy and `NUGET_USER` secret were configured for this repo,
+  and the publish workflow ran successfully (see 0.1.0-alpha1
+  below).
+- A QUIC handshake through the published package itself was
+  verified from NuGet.org on a host that allows UDP, including
+  a shared-socket echo through the package.
+
+## 0.1.0-alpha1 — 2026-11-01 (listed on NuGet.org)
+
+First workflow-built release, published by trusted publishing
+from tag `v0.1.0-alpha1` (the tag minus `v` is the version).
+Install with the exact version, since it is a prerelease:
+
+```
+dotnet add package net.codingwell.quiche --version 0.1.0-alpha1
+```
+
+### Included
+
+- Everything from 0.1.0-alpha.1, plus native quiche 0.30.0
+  binaries for all 7 CI RIDs (win-x64, win-arm64, linux-x64,
+  linux-arm64, linux-musl-x64, osx-x64, osx-arm64) with
+  quiche + BoringSSL license texts, and the repo README as
+  the package readme.
+- Verified from NuGet.org (cache cleared first): handshake
+  with verification on, peer certificate byte-identical,
+  4,096-byte echo both ways, and a shared-socket echo both
+  directions through the package.
+
+### Known bug (fixed in Unreleased, above)
+
+- `QuicStream.SendAsync` fails for sends at/above the current
+  congestion window with "Stream send failed (quiche error
+  -1)". Single-send probes through this version: 18, 4,096,
+  and 12,000 bytes pass; 16,384 and 32,768 bytes fail.
 
 ## 0.1.0-alpha.1 — 2026-10-30 (unlisted on NuGet.org)
 
